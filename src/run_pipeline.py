@@ -21,6 +21,6 @@ pipeline = Pipeline(config)
 pipeline.convert()
 
 for layer in pipeline.model.model.layers:
-    layer.self_attn = pipeline.custom_MLA_attention(layer.self_attn)
+    layer.self_attn = pipeline.custom_MLA_attention(layer.self_attn.o_proj)
 
 pipeline.evaluate()
