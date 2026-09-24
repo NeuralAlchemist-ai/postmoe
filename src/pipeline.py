@@ -40,7 +40,7 @@ class Pipeline:
         )
         self.data = data_loader.load_data()
 
-    def custom_MLA_attention(self, o_proj, idx):
+    def custom_MLA_attention(self, o_proj):
 
         W_k_nope_target, W_k_rope_target, W_q_nope, W_q_rope, W_v = self.UniversalAttentionDecoupler(
             self.model,
@@ -52,6 +52,7 @@ class Pipeline:
 
 
         return self.MLA_Attention(
+            config = self.config,
             kv_down_proj=kv_down_proj,
             k_up_proj=k_up_proj,
             v_up_proj=v_up_proj,
@@ -59,7 +60,6 @@ class Pipeline:
             q_rope=W_q_rope,
             k_rope=W_k_rope_target,
             o_proj=o_proj,
-            idx = idx
         ) 
 
 
