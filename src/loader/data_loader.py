@@ -1,18 +1,29 @@
 class DataLoader:
-    def __init__(self, data_path):
-        self.data_path = data_path
+    def __init__(self, dataset_name, dataset_config, split="test[:100]"):
+        self.dataset_name = dataset_name
+        self.dataset_config = dataset_config
+        self.split = split
         self.data = None
 
     def load_data(self):
         """
         Load data from Hugging Face datasets.
         """
+        from datasets import load_dataset
+
         try:
-            from datasets import load_dataset
-            self.data = load_dataset(self.data_path)
-            print(f"Successfully loaded dataset: {self.data_path}")
-        except Exception as e:
-            print(f"Error loading dataset {self.data_path}: {e}")
+            self.data = load_dataset(
+                self.dataset_name,
+                self.dataset_config,
+                split=self.split,
+            )
+        except Exception as error:
+            raise RuntimeError(
+                f"Could not load dataset {self.dataset_name!r} "
+                f"with config {self.dataset_config!r} and split {self.split!r}."
+            ) from error
+
+        return self.data
 
     def get_data(self):
         """

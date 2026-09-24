@@ -6,7 +6,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "datasets>=5.0.1",
+    "flashinfer-python>=0.7.0",
     "pytest>=9.1.1",
     "torch>=2.14.0",
     "transformers>=5.17.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
