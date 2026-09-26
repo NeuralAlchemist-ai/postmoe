@@ -17,16 +17,23 @@ class Converter:
         rank = torch.searchsorted(cumulative_energy, threshold * total_energy).item() + 1
         return rank
     
-    def svd_compress(self):
+    def svd_compress(self, target_rank=None):
         """
-        Perform SVD on the NOPE matrix and compress it by keeping only the top singular values
+        Perform SVD on the NOPE matrix and compress it by keeping only the top singular values.
+
+        Args:
+            target_rank: If provided, force this rank instead of auto-detecting.
+                         Useful when K and V must share the same latent dimension.
         """
         # Perform SVD on the ROPE and NOPE matrices
         self.nope = self.nope.detach().to(torch.float32)
         U, S, Vh = torch.linalg.svd(self.nope, full_matrices=False)
 
         # Determine the rank for compression (you can adjust this)
-        rank = self._optimized_rank(S)
+        if target_rank is None:
+            rank = self._optimized_rank(S)
+        else:
+            rank = min(target_rank, len(S))
 
         # Compress the matrices by keeping only the top singular values
         up = U[:, :rank] @ torch.diag(S[:rank])
