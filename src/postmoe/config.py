@@ -11,3 +11,5 @@ class Config:
     kv_latent_dim: int = 64
     nope_dim: int = 64
     rope_dim: int = 32
+    head_dim: int = 64       # per-head output dim (usually == nope_dim)
+    max_seq_len: int = 4096  # must be >= longest sequence you evaluate on
