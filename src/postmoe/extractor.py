@@ -115,6 +115,4 @@ class UniversalAttentionDecoupler(nn.Module):
         else:
             raise ValueError(f"Invalid repeat_mode: {repeat_mode}. Must be 'gqa_broadcast' or None.")
 
-        W_k_nope_target = W_k_nope_target.reshape(-1, self.hidden_size)
-        W_k_rope_target = W_k_rope_target.reshape(-1, self.hidden_size)
         return W_k_nope_target, W_k_rope_target, W_q_nope, W_q_rope, W_v
