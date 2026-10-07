@@ -119,6 +119,9 @@ class Pipeline:
         v_2d      = v_expanded.reshape(-1, hidden)  # [num_q_heads * head_dim, hidden]
 
         # ── SVD compress K_nope → (k_up_proj, kv_down_proj) ──
+        # Rank is rounded up to a FlashInfer-friendly multiple (default 32).
+        # Raw energy rank (~19 for Qwen2-0.5B) cannot JIT: HEAD_DIM_CKV must be
+        # MMA-aligned or kernels fail with zero-sized o_frag.
         k_up, kv_down = self.Converter(k_nope_2d).svd_compress()
         rank = kv_down.shape[0]   # the latent / compressed KV dimension
 

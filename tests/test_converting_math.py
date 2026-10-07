@@ -30,7 +30,7 @@ def test_svd_compress_target_rank():
     matrix = torch.randn(100, 80)
     target_rank = 16
     converter = Converter(matrix)
-    up, down = converter.svd_compress(target_rank=target_rank)
+    up, down = converter.svd_compress(target_rank=target_rank, align_multiple=1)
 
     assert up.shape == (100, target_rank), f"Expected up shape (100, {target_rank}), got {up.shape}"
     assert down.shape == (target_rank, 80), f"Expected down shape ({target_rank}, 80), got {down.shape}"
@@ -41,10 +41,29 @@ def test_svd_compress_target_rank_clamping():
     """Test that target rank does not exceed maximum possible singular values."""
     matrix = torch.randn(20, 15)  # Max rank is 15
     converter = Converter(matrix)
-    up, down = converter.svd_compress(target_rank=50)
+    # Disable MMA alignment so we only test the clamp-to-max-rank path.
+    up, down = converter.svd_compress(target_rank=50, align_multiple=1)
 
     assert up.shape[1] == 15, f"Expected rank clamped to 15, got {up.shape[1]}"
     assert down.shape[0] == 15, f"Expected rank clamped to 15, got {down.shape[0]}"
+
+
+def test_svd_compress_aligns_rank_for_flashinfer():
+    """Auto rank must round up to an MMA multiple (FlashInfer HEAD_DIM_CKV)."""
+    matrix = torch.randn(128, 64)
+    converter = Converter(matrix)
+    up, down = converter.svd_compress(align_multiple=32)
+    rank = down.shape[0]
+    assert rank % 32 == 0, f"Expected aligned rank, got {rank}"
+    assert up.shape[1] == rank
+
+
+def test_align_rank_helper():
+    assert Converter.align_rank(19, max_rank=448, multiple=32) == 32
+    assert Converter.align_rank(32, max_rank=448, multiple=32) == 32
+    assert Converter.align_rank(33, max_rank=448, multiple=32) == 64
+    assert Converter.align_rank(400, max_rank=448, multiple=32) == 416
+    assert Converter.align_rank(440, max_rank=448, multiple=32) == 448
 
 
 def test_optimized_rank():
@@ -68,7 +87,7 @@ def test_svd_compress_exact_low_rank():
     exact_low_rank = B @ C
 
     converter = Converter(exact_low_rank)
-    up, down = converter.svd_compress(target_rank=4)
+    up, down = converter.svd_compress(target_rank=4, align_multiple=1)
 
     reconstructed = up @ down
     assert torch.allclose(exact_low_rank, reconstructed, atol=1e-4), "Rank-4 matrix should be reconstructed accurately."
