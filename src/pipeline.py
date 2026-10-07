@@ -11,11 +11,16 @@ from loader.load_model import ModelLoader
 from loader.data_loader import DataLoader
 
 
-def _make_linear(weight_2d):
+def _make_linear(weight_2d, dtype=None, device=None):
     """Wrap a 2D weight tensor [out_features, in_features] into nn.Linear(bias=False)."""
     out_f, in_f = weight_2d.shape
-    lin = nn.Linear(in_f, out_f, bias=False)
-    lin.weight = nn.Parameter(weight_2d)
+    weight = weight_2d.detach()
+    if dtype is not None:
+        weight = weight.to(dtype=dtype)
+    if device is not None:
+        weight = weight.to(device=device)
+    lin = nn.Linear(in_f, out_f, bias=False, device=weight.device, dtype=weight.dtype)
+    lin.weight = nn.Parameter(weight)
     return lin
 
 
@@ -114,27 +119,33 @@ class Pipeline:
         # ── Build per-layer config with actual kv_latent_dim from SVD ──
         layer_config = replace(self.mla_config, kv_latent_dim=rank)
 
+        # SVD runs in float32; cast back to the host layer's device/dtype (often bf16 on CUDA)
+        dtype = o_proj.weight.dtype
+        device = o_proj.weight.device
+
         # ── Wrap in nn.Linear and build MLA_Attention ──
-        return self.MLA_Attention(
+        mla = self.MLA_Attention(
             config=layer_config,
-            kv_down_proj=_make_linear(kv_down),      # hidden → latent  (callable)
-            k_up_proj=_make_linear(k_up),             # latent → H*nope  (accessed via .weight)
-            v_up_proj=_make_linear(v_up),             # latent → H*head  (accessed via .weight)
-            q_nope=_make_linear(q_nope_2d),           # hidden → H*nope  (callable)
-            q_rope=_make_linear(q_rope_2d),           # hidden → H*rope  (callable)
-            k_rope=_make_linear(k_rope_single),       # hidden → rope    (callable)
-            o_proj=o_proj,                             # original (already nn.Linear)
+            kv_down_proj=_make_linear(kv_down, dtype=dtype, device=device),
+            k_up_proj=_make_linear(k_up, dtype=dtype, device=device),
+            v_up_proj=_make_linear(v_up, dtype=dtype, device=device),
+            q_nope=_make_linear(q_nope_2d, dtype=dtype, device=device),
+            q_rope=_make_linear(q_rope_2d, dtype=dtype, device=device),
+            k_rope=_make_linear(k_rope_single, dtype=dtype, device=device),
+            o_proj=o_proj,
         )
+        return mla.to(device=device, dtype=dtype)
 
     def evaluate(self):
         try:
-            evaluation = self.Evaluation(self.model, self.data, "cuda")
+            device = next(self.model.parameters()).device
+            evaluation = self.Evaluation(self.model, self.data, str(device))
             inputs = self.tokenizer(
                 self.data[0]["text"],
                 return_tensors="pt",
                 truncation=True,
                 max_length=self.mla_config.max_seq_len,
-            ).to("cuda")
+            ).to(device)
             evaluation.evaluate(inputs)
         except Exception as e:
             print(f"Error during evaluation: {e}")
