@@ -53,6 +53,8 @@ class MLA_Attention(torch.nn.Module):
 
     def apply_rope(self, x, cos, sin):
             # cos/sin are (T, head_size) and broadcast over (B, n_heads, T, head_size)
+            cos = cos.to(dtype=x.dtype, device=x.device)
+            sin = sin.to(dtype=x.dtype, device=x.device)
             half = x.shape[-1] // 2
             x1, x2 = x[..., :half], x[..., half:]
 
@@ -122,10 +124,11 @@ class MLA_Attention(torch.nn.Module):
         ckv_cache = c_kv.unsqueeze(1)      # [T, 1, latent]
         kpe_cache = k_rope.unsqueeze(1)    # [T, 1, rope]
 
-        qo_indptr = torch.arange(0, B + 1, device="cuda", dtype=torch.int32) * L
+        device = hidden_states.device
+        qo_indptr = torch.arange(0, B + 1, device=device, dtype=torch.int32) * L
         kv_indptr = qo_indptr.clone()
-        kv_indices = torch.arange(T, device="cuda", dtype=torch.int32)
-        kv_len_arr = torch.full((B,), L, dtype=torch.int32, device="cuda")
+        kv_indices = torch.arange(T, device=device, dtype=torch.int32)
+        kv_len_arr = torch.full((B,), L, dtype=torch.int32, device=device)
 
         self.flashinfer_mla.plan(
             qo_indptr, kv_indptr, kv_indices, kv_len_arr,
