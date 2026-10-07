@@ -59,7 +59,43 @@ class MLA_Attention(torch.nn.Module):
             x_rotated = torch.cat((-x2, x1), dim=-1)
             return (x * cos) + (x_rotated * sin)
 
-    def forward(self, hidden_states, past_seq_len, position_embeddings=None, past_key_values=None, **kw):
+    def _infer_past_seq_len(self, past_seq_len, past_key_values, past_key_value):
+        """HF never passes past_seq_len; derive it from cache when present."""
+        if past_seq_len is not None:
+            return past_seq_len
+
+        cache = past_key_values if past_key_values is not None else past_key_value
+        if cache is None:
+            return 0
+
+        # Our own cache tuple from a previous forward: (ckv_cache, kpe_cache)
+        if isinstance(cache, tuple) and len(cache) == 2 and torch.is_tensor(cache[0]):
+            return cache[0].shape[0]
+
+        # HuggingFace DynamicCache / similar
+        if hasattr(cache, "get_seq_length"):
+            try:
+                return int(cache.get_seq_length())
+            except TypeError:
+                return int(cache.get_seq_length(0))
+
+        return 0
+
+    def forward(
+        self,
+        hidden_states,
+        past_seq_len=None,
+        position_embeddings=None,
+        past_key_values=None,
+        past_key_value=None,
+        **kw,
+    ):
+        # Transformers calls: self_attn(hidden_states, attention_mask=..., past_key_value=..., ...)
+        # so past_seq_len must be optional and inferred.
+        past_seq_len = self._infer_past_seq_len(
+            past_seq_len, past_key_values, past_key_value
+        )
+
         B, L, _ = hidden_states.shape
         T = B * L
         c = self.config
