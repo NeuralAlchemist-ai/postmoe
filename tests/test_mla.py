@@ -70,17 +70,14 @@ def test_mla_attention_cuda_forward():
         q_rope=_make_linear(torch.randn(n_head * rope_dim, hidden)),
         k_rope=_make_linear(torch.randn(rope_dim, hidden)),
         o_proj=nn.Linear(n_head * head_dim, hidden, bias=False),
+        use_flashinfer=False,  # exercise reference path; FlashInfer needs aligned dims + arch
     ).cuda()
 
     batch_size = 2
     seq_len = 8
     hidden_states = torch.randn(batch_size, seq_len, hidden, device="cuda")
 
-    try:
-        out, (ckv_cache, kpe_cache) = mla(hidden_states, past_seq_len=0)
-        assert out.shape == (batch_size, seq_len, hidden)
-        assert ckv_cache.shape == (batch_size * seq_len, 1, latent_dim)
-        assert kpe_cache.shape == (batch_size * seq_len, 1, rope_dim)
-    except Exception as e:
-        # FlashInfer may require specific GPU architectures (e.g. sm_80+ or sm_90+)
-        pytest.skip(f"FlashInfer MLA runtime skipped due to GPU backend requirement: {e}")
+    out, (ckv_cache, kpe_cache) = mla(hidden_states, past_seq_len=0)
+    assert out.shape == (batch_size, seq_len, hidden)
+    assert ckv_cache.shape == (batch_size * seq_len, 1, latent_dim)
+    assert kpe_cache.shape == (batch_size * seq_len, 1, rope_dim)
