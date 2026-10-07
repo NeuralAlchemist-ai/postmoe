@@ -68,6 +68,19 @@ class Pipeline:
         self.all_weights = decoupler.convert_to_target_layout(
             repeat_mode="gqa_broadcast"
         )
+        self._sync_mla_config_from_decoupler(decoupler)
+
+    def _sync_mla_config_from_decoupler(self, decoupler):
+        """Align MLA dims with the loaded HF model (defaults in Config are placeholders)."""
+        total_head_dim = decoupler.total_head_dim
+        nope_dim = total_head_dim - self.rope_dim
+        self.mla_config = replace(
+            self.mla_config,
+            n_head=decoupler.num_q_heads,
+            nope_dim=nope_dim,
+            rope_dim=self.rope_dim,
+            head_dim=total_head_dim,
+        )
 
     def custom_MLA_attention(self, layer_idx, o_proj):
         """Build an MLA_Attention module for a single layer.
@@ -92,6 +105,9 @@ class Pipeline:
         v_i      = W_v_all[layer_idx]
 
         num_q_heads = q_nope_i.shape[0]
+        nope_dim = q_nope_i.shape[1]
+        rope_dim = q_rope_i.shape[1]
+        head_dim = v_i.shape[1]
         hidden = q_nope_i.shape[-1]
 
         # ── Expand V to match num_q_heads (same broadcast as K) ──
@@ -116,8 +132,15 @@ class Pipeline:
         q_nope_2d = q_nope_i.reshape(-1, hidden)   # [num_q_heads * nope_dim, hidden]
         q_rope_2d = q_rope_i.reshape(-1, hidden)   # [num_q_heads * rope_dim, hidden]
 
-        # ── Build per-layer config with actual kv_latent_dim from SVD ──
-        layer_config = replace(self.mla_config, kv_latent_dim=rank)
+        # Per-layer config: dims from extracted weights, rank from SVD
+        layer_config = replace(
+            self.mla_config,
+            n_head=num_q_heads,
+            nope_dim=nope_dim,
+            rope_dim=rope_dim,
+            head_dim=head_dim,
+            kv_latent_dim=rank,
+        )
 
         # SVD runs in float32; cast back to the host layer's device/dtype (often bf16 on CUDA)
         dtype = o_proj.weight.dtype
