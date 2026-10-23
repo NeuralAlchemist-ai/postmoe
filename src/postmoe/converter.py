@@ -1,46 +1,31 @@
-import math
-
 import torch
-
-
-# FlashInfer MLA Tensor-Core tiles need HEAD_DIM_CKV divisible by this.
-# Rank 19 (auto energy) triggers "zero-sized o_frag" at JIT compile time.
-FLASHINFER_CKV_ALIGN = 32
-
 
 class Converter:
     def __init__(self, nope):
         self.nope = nope
 
-    def _optimized_rank(self, U, threshold=0.9):
+    def _optimized_rank(self, S, threshold=0.95):
         """
-        Determine the optimal rank for compression based on the cumulative energy of singular values.
+        Определяет оптимальный ранг сжатия на основе сингулярных чисел.
+        Порог увеличен до 0.95 для лучшего сохранения точности модели.
         """
-        cumulative_energy = torch.cumsum(U ** 2, dim=0)
+        cumulative_energy = torch.cumsum(S ** 2, dim=0)
         total_energy = cumulative_energy[-1]
         rank = torch.searchsorted(cumulative_energy, threshold * total_energy).item() + 1
         return rank
 
-    @staticmethod
-    def align_rank(rank: int, max_rank: int, multiple: int = FLASHINFER_CKV_ALIGN) -> int:
-        """Round rank up to an MMA-friendly multiple, without exceeding max_rank."""
-        if multiple <= 1:
-            return min(rank, max_rank)
-        aligned = int(math.ceil(rank / multiple) * multiple)
-        aligned = max(multiple, aligned)  # never go below one tile
-        return min(aligned, max_rank)
-
-    def svd_compress(self, target_rank=None, align_multiple: int = FLASHINFER_CKV_ALIGN):
+    def svd_compress(self, target_rank=None):
         """
-        Perform SVD on the NOPE matrix and compress it by keeping only the top singular values.
-
+        Выполняет сбалансированное SVD-сжатие матрицы NOPE для конвертации в MLA.
+        
         Args:
-            target_rank: If provided, force this rank instead of auto-detecting.
-                         Useful when K and V must share the same latent dimension.
-            align_multiple: Round the chosen rank up to a multiple of this value so
-                            FlashInfer MLA kernels can compile (HEAD_DIM_CKV).
+            target_rank: Если передан, принудительно устанавливает этот ранг.
+                         Полезно для явного контроля сжатия KV-кэша.
         """
+        original_dtype = self.nope.dtype
+        # SVD вычисления обязательно проводим в float32 для стабильности
         self.nope = self.nope.detach().to(torch.float32)
+        
         U, S, Vh = torch.linalg.svd(self.nope, full_matrices=False)
         max_rank = len(S)
 
@@ -49,8 +34,13 @@ class Converter:
         else:
             rank = min(int(target_rank), max_rank)
 
-        rank = self.align_rank(rank, max_rank, multiple=align_multiple)
-
-        up = U[:, :rank] @ torch.diag(S[:rank])
-        down = Vh[:rank, :]
-        return up, down
+        # РЕШЕНИЕ ПРОБЛЕМЫ ПЕРПЛЕКСИИ: 
+        # Распределяем сингулярные числа симметрично через квадратный корень.
+        # Это сохраняет дисперсию весов и предотвращает взрыв активаций.
+        S_sqrt = torch.diag(torch.sqrt(S[:rank]))
+        
+        up = U[:, :rank] @ S_sqrt
+        down = S_sqrt @ Vh[:rank, :]
+        
+        # Возвращаем тензоры в исходном типе данных модели (BF16 или FP16)
+        return up.to(original_dtype), down.to(original_dtype)
