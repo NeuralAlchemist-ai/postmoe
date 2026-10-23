@@ -162,16 +162,33 @@ class Pipeline:
         )
         return mla.to(device=device, dtype=dtype)
 
+    def _first_nonempty_text(self, min_chars: int = 32):
+        """WikiText often starts with blank rows; skip those for evaluation."""
+        for row in self.data:
+            text = row.get("text") or row.get("content") or ""
+            if isinstance(text, str) and len(text.strip()) >= min_chars:
+                return text
+        raise ValueError(
+            f"No non-empty text sample found in dataset "
+            f"(looked for >= {min_chars} chars)."
+        )
+
     def evaluate(self):
         try:
             device = next(self.model.parameters()).device
             evaluation = self.Evaluation(self.model, self.data, str(device))
+            text = self._first_nonempty_text()
             inputs = self.tokenizer(
-                self.data[0]["text"],
+                text,
                 return_tensors="pt",
                 truncation=True,
                 max_length=self.mla_config.max_seq_len,
             ).to(device)
+            if inputs["input_ids"].numel() < 2:
+                raise ValueError(
+                    "Tokenized evaluation sample is too short for perplexity "
+                    f"(got {inputs['input_ids'].numel()} tokens)."
+                )
             evaluation.evaluate(inputs)
         except Exception as e:
             print(f"Error during evaluation: {e}")

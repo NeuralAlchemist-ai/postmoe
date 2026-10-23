@@ -1,17 +1,6 @@
 import torch
 import torch.nn.functional as F
 
-# FlashInfer is optional at import time; we fall back to a pure PyTorch MLA path
-# when JIT fails (unsupported HEAD_DIM_CKV) or the GPU arch cannot build kernels.
-try:
-    from flashinfer.mla import BatchMLAPagedAttentionWrapper
-
-    _FLASHINFER_AVAILABLE = True
-except Exception:
-    BatchMLAPagedAttentionWrapper = None
-    _FLASHINFER_AVAILABLE = False
-
-
 class MLA_Attention(torch.nn.Module):
     def __init__(
         self,
@@ -23,7 +12,8 @@ class MLA_Attention(torch.nn.Module):
         q_rope,
         k_rope,
         o_proj,
-        use_flashinfer: bool = True,
+        use_flashinfer: bool = False,
+        **kwargs,
     ):
         super().__init__()
         self.config = config
@@ -38,16 +28,6 @@ class MLA_Attention(torch.nn.Module):
         self.o_proj = o_proj
 
         self.bmm2_scale = 1.0
-        self._use_flashinfer = bool(use_flashinfer and _FLASHINFER_AVAILABLE)
-        self.flashinfer_mla = None
-        self.workspace_buffer = None
-
-        if self._use_flashinfer:
-            # Workspace for FlashInfer intermediate buffers (128MB)
-            self.workspace_buffer = torch.empty(
-                128 * 1024 * 1024, dtype=torch.uint8, device="cuda"
-            )
-            self.flashinfer_mla = BatchMLAPagedAttentionWrapper(self.workspace_buffer)
 
         cos_cache, sin_cache = self._build_rope_cache(
             config.max_seq_len, self.config.rope_dim
@@ -130,36 +110,8 @@ class MLA_Attention(torch.nn.Module):
 
         return B, L, T, q_abs, q_rope, c_kv, k_rope, w_uv
 
-    def _flashinfer_attn(self, B, L, T, q_abs, q_rope, c_kv, k_rope, sm_scale):
-        c = self.config
-        ckv_cache = c_kv.unsqueeze(1)  # [T, 1, latent]
-        kpe_cache = k_rope.unsqueeze(1)  # [T, 1, rope]
-
-        device = q_abs.device
-        qo_indptr = torch.arange(0, B + 1, device=device, dtype=torch.int32) * L
-        kv_indptr = qo_indptr.clone()
-        kv_indices = torch.arange(T, device=device, dtype=torch.int32)
-        kv_len_arr = torch.full((B,), L, dtype=torch.int32, device=device)
-
-        self.flashinfer_mla.plan(
-            qo_indptr,
-            kv_indptr,
-            kv_indices,
-            kv_len_arr,
-            c.n_head,
-            c.kv_latent_dim,
-            c.rope_dim,
-            1,
-            True,
-            sm_scale,
-            q_abs.dtype,
-            ckv_cache.dtype,
-        )
-        o_lat = self.flashinfer_mla.run(q_abs, q_rope, ckv_cache, kpe_cache)
-        return o_lat, ckv_cache, kpe_cache
-
     def _torch_attn(self, B, L, T, q_abs, q_rope, c_kv, k_rope, sm_scale):
-        """Reference absorbed MLA (causal) used when FlashInfer cannot compile."""
+        """Absorbed MLA attention (causal) using PyTorch."""
         c = self.config
         # Per-batch sequences stacked as T = B*L contiguous tokens.
         q_abs_b = q_abs.view(B, L, c.n_head, c.kv_latent_dim)
@@ -200,31 +152,21 @@ class MLA_Attention(torch.nn.Module):
             past_seq_len, past_key_values, past_key_value
         )
 
+        B, L, _ = hidden_states.shape
+        if L == 0:
+            # WikiText has blank rows; keep shapes valid for the rest of the stack.
+            empty = hidden_states.new_zeros(B, 0, hidden_states.shape[-1])
+            return empty, None
+
         c = self.config
         sm_scale = 1.0 / (c.nope_dim + c.rope_dim) ** 0.5
         B, L, T, q_abs, q_rope, c_kv, k_rope, w_uv = self._project(
             hidden_states, past_seq_len
         )
 
-        if self._use_flashinfer:
-            try:
-                o_lat, ckv_cache, kpe_cache = self._flashinfer_attn(
-                    B, L, T, q_abs, q_rope, c_kv, k_rope, sm_scale
-                )
-            except Exception as exc:
-                # Permanent fallback after first JIT / runtime failure (e.g. bad ckv dim, sm_75).
-                print(
-                    f"FlashInfer MLA unavailable ({type(exc).__name__}: {exc}); "
-                    "falling back to PyTorch MLA for this module."
-                )
-                self._use_flashinfer = False
-                o_lat, ckv_cache, kpe_cache = self._torch_attn(
-                    B, L, T, q_abs, q_rope, c_kv, k_rope, sm_scale
-                )
-        else:
-            o_lat, ckv_cache, kpe_cache = self._torch_attn(
-                B, L, T, q_abs, q_rope, c_kv, k_rope, sm_scale
-            )
+        o_lat, ckv_cache, kpe_cache = self._torch_attn(
+            B, L, T, q_abs, q_rope, c_kv, k_rope, sm_scale
+        )
 
         out = torch.einsum("thc,hvc->thv", o_lat, w_uv).reshape(B, L, -1)
         return self.o_proj(out), (ckv_cache, kpe_cache)

@@ -42,7 +42,46 @@ def test_apply_rope_math():
     assert torch.allclose(rotated, x), "Zero sine should keep vector unchanged."
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for FlashInfer MLA attention")
+def test_mla_attention_forward_cpu():
+    hidden = 128
+    n_head = 4
+    nope_dim = 16
+    rope_dim = 16
+    latent_dim = 32
+    head_dim = nope_dim
+    max_seq_len = 64
+
+    cfg = Config(
+        n_head=n_head,
+        nope_dim=nope_dim,
+        rope_dim=rope_dim,
+        kv_latent_dim=latent_dim,
+        head_dim=head_dim,
+        max_seq_len=max_seq_len,
+    )
+
+    mla = MLA_Attention(
+        config=cfg,
+        kv_down_proj=_make_linear(torch.randn(latent_dim, hidden)),
+        k_up_proj=_make_linear(torch.randn(n_head * nope_dim, latent_dim)),
+        v_up_proj=_make_linear(torch.randn(n_head * head_dim, latent_dim)),
+        q_nope=_make_linear(torch.randn(n_head * nope_dim, hidden)),
+        q_rope=_make_linear(torch.randn(n_head * rope_dim, hidden)),
+        k_rope=_make_linear(torch.randn(rope_dim, hidden)),
+        o_proj=nn.Linear(n_head * head_dim, hidden, bias=False),
+    )
+
+    batch_size = 2
+    seq_len = 8
+    hidden_states = torch.randn(batch_size, seq_len, hidden)
+
+    out, (ckv_cache, kpe_cache) = mla(hidden_states, past_seq_len=0)
+    assert out.shape == (batch_size, seq_len, hidden)
+    assert ckv_cache.shape == (batch_size * seq_len, 1, latent_dim)
+    assert kpe_cache.shape == (batch_size * seq_len, 1, rope_dim)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 def test_mla_attention_cuda_forward():
     hidden = 128
     n_head = 4
@@ -70,7 +109,6 @@ def test_mla_attention_cuda_forward():
         q_rope=_make_linear(torch.randn(n_head * rope_dim, hidden)),
         k_rope=_make_linear(torch.randn(rope_dim, hidden)),
         o_proj=nn.Linear(n_head * head_dim, hidden, bias=False),
-        use_flashinfer=False,  # exercise reference path; FlashInfer needs aligned dims + arch
     ).cuda()
 
     batch_size = 2
