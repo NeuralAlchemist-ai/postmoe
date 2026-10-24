@@ -42,15 +42,15 @@ def test_custom_mla_attention_construction():
 
     # Mock all_weights tuple:
     #   k_nope: [num_layers, num_q_heads, nope_dim, hidden]
-    #   k_rope: [num_layers, num_q_heads, rope_dim, hidden]
+    #   k_rope: [num_layers, rope_dim, hidden]
     #   q_nope: [num_layers, num_q_heads, nope_dim, hidden]
     #   q_rope: [num_layers, num_q_heads, rope_dim, hidden]
-    #   v:      [num_layers, num_kv_heads, head_dim, hidden]
+    #   v:      [num_layers, num_q_heads, head_dim, hidden]
     W_k_nope = torch.randn(num_layers, num_q_heads, nope_dim, hidden)
-    W_k_rope = torch.randn(num_layers, num_q_heads, rope_dim, hidden)
+    W_k_rope = torch.randn(num_layers, rope_dim, hidden)
     W_q_nope = torch.randn(num_layers, num_q_heads, nope_dim, hidden)
     W_q_rope = torch.randn(num_layers, num_q_heads, rope_dim, hidden)
-    W_v = torch.randn(num_layers, num_kv_heads, head_dim, hidden)
+    W_v = torch.randn(num_layers, num_q_heads, head_dim, hidden)
     pipeline.all_weights = (W_k_nope, W_k_rope, W_q_nope, W_q_rope, W_v)
 
     o_proj = nn.Linear(num_q_heads * head_dim, hidden, bias=False)

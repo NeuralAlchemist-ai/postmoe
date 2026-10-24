@@ -110,9 +110,12 @@ class Pipeline:
         head_dim = v_i.shape[1]
         hidden = q_nope_i.shape[-1]
 
-        # ── Expand V to match num_q_heads (same broadcast as K) ──
-        gqa_group = num_q_heads // v_i.shape[0]
-        v_expanded = v_i.repeat_interleave(gqa_group, dim=0)   # [num_q_heads, head_dim, hidden]
+        # ── Expand V to match num_q_heads (if not already broadcast) ──
+        if v_i.shape[0] != num_q_heads:
+            gqa_group = num_q_heads // v_i.shape[0]
+            v_expanded = v_i.repeat_interleave(gqa_group, dim=0)   # [num_q_heads, head_dim, hidden]
+        else:
+            v_expanded = v_i
 
         # ── Flatten heads → 2D for SVD ──
         k_nope_2d = k_nope_i.reshape(-1, hidden)   # [num_q_heads * nope_dim, hidden]
@@ -128,8 +131,11 @@ class Pipeline:
         # ── SVD compress V with SAME rank (MLA shares the latent space) ──
         v_up, _ = self.Converter(v_2d).svd_compress(target_rank=rank)
 
-        # ── For MLA, k_rope is a single shared projection (mean across Q-broadcast heads) ──
-        k_rope_single = k_rope_i.mean(dim=0)   # [rope_dim, hidden]
+        # ── For MLA, k_rope is a single shared projection across all heads ──
+        if k_rope_i.ndim == 3:
+            k_rope_single = k_rope_i.mean(dim=0)   # [rope_dim, hidden]
+        else:
+            k_rope_single = k_rope_i                # already [rope_dim, hidden]
 
         # ── Flatten Q heads → 2D ──
         q_nope_2d = q_nope_i.reshape(-1, hidden)   # [num_q_heads * nope_dim, hidden]

@@ -107,7 +107,9 @@ class UniversalAttentionDecoupler(nn.Module):
                 self.gqa_group_size,
                 dim=1,
             )
-            W_k_rope_target = W_k_rope_headed.repeat_interleave(
+            W_k_rope_target = W_k_rope.mean(dim=1)
+            
+            W_v_target = W_v.repeat_interleave(
                 self.gqa_group_size,
                 dim=1,
             )
@@ -115,4 +117,4 @@ class UniversalAttentionDecoupler(nn.Module):
         else:
             raise ValueError(f"Invalid repeat_mode: {repeat_mode}. Must be 'gqa_broadcast' or None.")
 
-        return W_k_nope_target, W_k_rope_target, W_q_nope, W_q_rope, W_v
+        return W_k_nope_target, W_k_rope_target, W_q_nope, W_q_rope, W_v_target

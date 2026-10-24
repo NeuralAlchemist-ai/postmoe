@@ -62,12 +62,12 @@ def test_extractor_suffix_strategy():
     head_dim = hidden_size // num_q_heads  # 16
     nope_dim = head_dim - rope_dim         # 8
 
-    # With gqa_broadcast, K heads are broadcast from num_kv_heads to num_q_heads
+    # With gqa_broadcast, K nope and V are broadcast to num_q_heads; K rope is shared (no heads)
     assert W_k_nope.shape == (num_layers, num_q_heads, nope_dim, hidden_size)
-    assert W_k_rope.shape == (num_layers, num_q_heads, rope_dim, hidden_size)
+    assert W_k_rope.shape == (num_layers, rope_dim, hidden_size)
     assert W_q_nope.shape == (num_layers, num_q_heads, nope_dim, hidden_size)
     assert W_q_rope.shape == (num_layers, num_q_heads, rope_dim, hidden_size)
-    assert W_v.shape == (num_layers, num_kv_heads, head_dim, hidden_size)
+    assert W_v.shape == (num_layers, num_q_heads, head_dim, hidden_size)
 
 
 def test_extractor_repeat_mode_none():
