@@ -64,3 +64,35 @@ def test_custom_mla_attention_construction():
     assert mla_module.kv_down_proj.weight.shape[1] == hidden
     assert mla_module.k_up_proj.weight.shape[0] == num_q_heads * nope_dim
     assert mla_module.v_up_proj.weight.shape[0] == num_q_heads * head_dim
+
+
+def test_pipeline_export_to_vllm(tmp_path):
+    import os
+
+    hidden = 64
+    num_q_heads = 4
+    nope_dim = 8
+    rope_dim = 8
+    head_dim = 16
+    num_layers = 2
+
+    config = Config(
+        n_head=num_q_heads,
+        nope_dim=nope_dim,
+        rope_dim=rope_dim,
+        head_dim=head_dim,
+        max_seq_len=64,
+    )
+    pipeline = Pipeline(config)
+    W_k_nope = torch.randn(num_layers, num_q_heads, nope_dim, hidden)
+    W_k_rope = torch.randn(num_layers, rope_dim, hidden)
+    W_q_nope = torch.randn(num_layers, num_q_heads, nope_dim, hidden)
+    W_q_rope = torch.randn(num_layers, num_q_heads, rope_dim, hidden)
+    W_v = torch.randn(num_layers, num_q_heads, head_dim, hidden)
+    pipeline.all_weights = (W_k_nope, W_k_rope, W_q_nope, W_q_rope, W_v)
+
+    out_dir = str(tmp_path / "vllm_out")
+    pipeline.export_to_vllm(out_dir, num_experts=4, top_k=2)
+
+    assert os.path.exists(os.path.join(out_dir, "pytorch_model.bin"))
+    assert os.path.exists(os.path.join(out_dir, "config.json"))

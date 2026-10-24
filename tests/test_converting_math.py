@@ -87,3 +87,45 @@ def test_svd_compress_exact_low_rank():
 
     reconstructed = up @ down
     assert torch.allclose(exact_low_rank, reconstructed, atol=1e-4), "Rank-4 matrix should be reconstructed accurately."
+
+
+def test_data_driven_svd_convert():
+    from postmoe.converter import DataDrivenSVD
+
+    hidden = 32
+    out_k = 16
+    out_v = 24
+    w_k = torch.randn(out_k, hidden)
+    w_v = torch.randn(out_v, hidden)
+
+    svd = DataDrivenSVD(w_k, w_v)
+    w_dkv, w_uk, w_uv = svd.convert(target_rank=8)
+
+    assert w_dkv.shape == (8, hidden)
+    assert w_uk.shape == (out_k, 8)
+    assert w_uv.shape == (out_v, 8)
+
+    # Test with covariance matrix
+    X = torch.randn(100, hidden)
+    cov = torch.mm(X.t(), X) / 100
+    w_dkv_cov, w_uk_cov, w_uv_cov = svd.convert(target_rank=8, cov_matrix=cov)
+    assert w_dkv_cov.shape == (8, hidden)
+    assert w_uk_cov.shape == (out_k, 8)
+    assert w_uv_cov.shape == (out_v, 8)
+
+
+def test_layer_activation_accumulator():
+    from postmoe.converter import LayerActivationAccumulator
+    import torch.nn as nn
+
+    model = nn.Sequential(nn.Linear(16, 16))
+    accumulator = LayerActivationAccumulator(model)
+
+    dummy_input = torch.randn(4, 16)
+    with torch.no_grad():
+        model(dummy_input)
+
+    accumulator.remove_hooks()
+    cov = accumulator.get_covariance("0")
+    assert cov.shape == (16, 16)
+    assert torch.all(torch.isfinite(cov))
